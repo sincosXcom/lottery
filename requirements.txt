@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+matplotlib
+plotly
+opencv-python
+Pillow# lottery
