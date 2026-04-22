@@ -7,13 +7,15 @@ import os
 import tempfile
 import cv2
 from PIL import Image
+import plotly.express as px
+import subprocess
 
 st.set_page_config(page_title="快乐8视频生成器", layout="wide")
 st.title("🎬 快乐8 视频生成器（独立版）")
 st.markdown("生成单期动画或3期滑动窗口视频，支持下载HTML/MP4。")
 
 # -----------------------------
-# 数据加载（支持上传或内置演示数据）
+# 数据加载（优先读取真实数据文件，否则使用演示数据）
 # -----------------------------
 @st.cache_data
 def load_data():
@@ -21,13 +23,16 @@ def load_data():
     file_path = "data/kl8.csv"
     if os.path.exists(file_path):
         df = pd.read_csv(file_path)
+        # 尝试识别号码列（支持 n1~n20 格式）
         num_cols = [f"n{i}" for i in range(1, 21)]
         if all(col in df.columns for col in num_cols):
             df["号码列表"] = df[num_cols].apply(lambda row: sorted(row.tolist()), axis=1)
             if "issue" in df.columns:
                 df.rename(columns={"issue": "期号"}, inplace=True)
             return df
-    # 如果文件不存在，则使用演示数据
+        else:
+            st.warning(f"数据文件格式不正确，缺少 {num_cols} 列，将使用演示数据。")
+    # 如果文件不存在或格式错误，则使用演示数据
     np.random.seed(42)
     n_periods = 100
     period_numbers = []
@@ -39,36 +44,17 @@ def load_data():
         "期号": issues,
         "号码列表": period_numbers
     })
+    st.info("使用演示数据（100期），如需真实数据请上传 data/kl8.csv 文件。")
     return df
 
 df = load_data()
+if df is None:
+    st.stop()
 
-data_source = st.sidebar.radio("数据来源", ["使用内置演示数据", "上传CSV文件"])
-if data_source == "上传CSV文件":
-    uploaded_file = st.sidebar.file_uploader("上传CSV文件", type=["csv"])
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
-        # 尝试自动识别号码列
-        num_cols = [f"n{i}" for i in range(1, 21)]
-        if all(col in df.columns for col in num_cols):
-            df["号码列表"] = df[num_cols].apply(lambda row: sorted(row.tolist()), axis=1)
-        elif "号码列表" in df.columns:
-            # 如果已存在列表列，直接使用
-            pass
-        else:
-            st.error("CSV格式错误，需要 n1~n20 列或预先生成的 '号码列表' 列")
-            st.stop()
-        if "期号" not in df.columns:
-            df["期号"] = range(1, len(df)+1)
-        st.success(f"已加载 {len(df)} 期数据")
-    else:
-        st.info("请上传CSV文件，或使用演示数据")
-        st.stop()
-else:
-    df = load_demo_data()
-    st.info(f"已生成 {len(df)} 期模拟数据（仅供演示）")
-
+# 确保期号为字符串（防止科学计数法）
+df["期号"] = df["期号"].astype(str)
 df = df.sort_values("期号").reset_index(drop=True)
+
 all_numbers = list(range(1, 81))
 
 # -----------------------------
@@ -96,9 +82,9 @@ if anim_mode == "最近N期":
 else:
     all_issues = df["期号"].tolist()
     min_issue, max_issue = all_issues[0], all_issues[-1]
-    start_issue = st.number_input("起始期号", min_value=int(min_issue), max_value=int(max_issue), value=int(min_issue), key="start_issue")
-    end_issue = st.number_input("结束期号", min_value=int(min_issue), max_value=int(max_issue), value=int(max_issue), key="end_issue")
-    if start_issue > end_issue:
+    start_issue = st.selectbox("起始期号", options=all_issues, index=0, key="start_issue")
+    end_issue = st.selectbox("结束期号", options=all_issues, index=len(all_issues)-1, key="end_issue")
+    if int(start_issue) > int(end_issue):
         st.error("起始期号不能大于结束期号")
         anim_df = pd.DataFrame()
     else:
@@ -127,7 +113,6 @@ else:
             })
         frames.append(frame_data)
 
-    import plotly.express as px
     all_frames = []
     for i, frame in enumerate(frames):
         for d in frame:
@@ -178,9 +163,9 @@ if len(df) >= 3:
     else:
         all_issues = df["期号"].tolist()
         min_issue, max_issue = all_issues[0], all_issues[-1]
-        v_start_issue = st.number_input("起始期号", min_value=int(min_issue), max_value=int(max_issue), value=int(min_issue), key="v_start_issue")
-        v_end_issue = st.number_input("结束期号", min_value=int(min_issue), max_value=int(max_issue), value=int(max_issue), key="v_end_issue")
-        if v_start_issue > v_end_issue:
+        v_start_issue = st.selectbox("起始期号", options=all_issues, index=0, key="v_start_issue")
+        v_end_issue = st.selectbox("结束期号", options=all_issues, index=len(all_issues)-1, key="v_end_issue")
+        if int(v_start_issue) > int(v_end_issue):
             st.error("起始期号不能大于结束期号")
             video_df = pd.DataFrame()
         else:
@@ -199,7 +184,6 @@ if len(df) >= 3:
                     if total_frames == 0:
                         st.error("窗口数为0")
                     else:
-                        # 画布参数
                         fig_width = 16.0
                         row_height = 0.23
                         total_rows = 3
@@ -268,7 +252,6 @@ if len(df) >= 3:
                         output_video = os.path.join(tmpdir, "output.mp4")
                         cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", os.path.join(tmpdir, "frame_%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", output_video]
                         try:
-                            import subprocess
                             subprocess.run(cmd, check=True, capture_output=True, text=True)
                             with open(output_video, "rb") as f:
                                 video_bytes = f.read()
