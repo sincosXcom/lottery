@@ -41,6 +41,8 @@ def load_data():
     })
     return df
 
+df = load_data()
+
 data_source = st.sidebar.radio("数据来源", ["使用内置演示数据", "上传CSV文件"])
 if data_source == "上传CSV文件":
     uploaded_file = st.sidebar.file_uploader("上传CSV文件", type=["csv"])
